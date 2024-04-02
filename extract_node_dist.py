@@ -118,7 +118,7 @@ if args.local_rank < args.num_gpus:
     model = GeneralModel(dim_feats[1], dim_feats[4], sample_param, memory_param, gnn_param, train_param).cuda()
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], process_group=nccl_group, output_device=args.local_rank)
     model.load_state_dict(torch.load(path_saver, map_location=torch.device('cuda:0')))
-    creterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
     while True:
         my_model_state = [None]
@@ -145,8 +145,8 @@ if args.local_rank < args.num_gpus:
             if mailbox is not None:
                 mailbox.prep_input_mails(mfgs[0])
             pred_pos, pred_neg = model(mfgs)
-            loss = creterion(pred_pos, torch.ones_like(pred_pos))
-            loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+            loss = criterion(pred_pos, torch.ones_like(pred_pos))
+            loss += criterion(pred_neg, torch.zeros_like(pred_neg))
             loss.backward()
             optimizer.step()
             if mailbox is not None:

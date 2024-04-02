@@ -202,6 +202,7 @@ class ParallelSampler
                           int neighs, bool use_ptr, bool from_root)
         {
             double t_s = omp_get_wtime();
+
             std::vector<NodeIDType> *root_nodes;
             std::vector<TimeStampType> *root_ts;
             if (from_root)
@@ -212,7 +213,9 @@ class ParallelSampler
             double t_ptr_s = omp_get_wtime();
             if (use_ptr)
                 update_ts_ptr(num_history, *root_nodes, *root_ts, 0);
+
             ret[0].ptr_time += omp_get_wtime() - t_ptr_s;
+
             for (int i = 0; i < num_history; i++)
             {
                 if (!from_root)
@@ -331,6 +334,7 @@ class ParallelSampler
                 combine_coo(ret[ret.size() - 1 - i], _row, _col, _eid, _ts, _dts, _nodes, _out_node);
                 ret[0].coo_time += omp_get_wtime() - t_coo_s;
             }
+
             ret[0].tot_time += omp_get_wtime() - t_s;
         }
 
@@ -351,10 +355,11 @@ class ParallelSampler
                 }
                 else
                     use_ptr = false;
-                if (i==0)
+                if (i==0) {
                     sample_layer(root_nodes, root_ts, num_neighbors[i], use_ptr, true);
-                else
+                } else {
                     sample_layer(root_nodes, root_ts, num_neighbors[i], use_ptr, false);
+                }
             }
         }
 };

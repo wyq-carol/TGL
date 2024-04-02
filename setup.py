@@ -5,7 +5,7 @@ from pybind11.setup_helpers import Pybind11Extension
 ext_modules = [
     Pybind11Extension("sampler_core", 
                       ['sampler_core.cpp'],
-                      extra_compile_args = ['-fopenmp'],
+                      extra_compile_args = ['-fopenmp','-g'],
                       extra_link_args = ['-fopenmp'],),
 ]
 

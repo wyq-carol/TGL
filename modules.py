@@ -1,7 +1,17 @@
 import torch
 import dgl
 from memorys import *
-from layers import *
+from layers.tgn_layer import *
+import time
+
+class GNNTimer:
+    def __enter__(self):
+        self.start_time = time.time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_time = time.time()
+        elapsed_time = end_time - self.start_time
+        # print(f"Time for this step: {elapsed_time:.6f} seconds")
 
 class GeneralModel(torch.nn.Module):
 
@@ -47,8 +57,26 @@ class GeneralModel(torch.nn.Module):
     
     def forward(self, mfgs, neg_samples=1):
         if self.memory_param['type'] == 'node':
-            self.memory_updater(mfgs[0])
+            self.memory_updater(mfgs[0]) # GRUMemeoryUpdater
         out = list()
+        # breakpoint()
+        """
+        # rst = self.layers['l0h0'](mfgs[0][0]) # /home/TGL/config/TGN.yml
+        TransfomerAttentionLayer(
+            (dropout): Dropout(p=0.2, inplace=False)
+            (att_dropout): Dropout(p=0.2, inplace=False)
+            (att_act): LeakyReLU(negative_slope=0.2)
+            (time_enc): TimeEncode(
+                (w): Linear(in_features=1, out_features=100, bias=True)
+            )
+            (w_q): Linear(in_features=200, out_features=100, bias=True)
+            (w_k): Linear(in_features=372, out_features=100, bias=True)
+            (w_v): Linear(in_features=372, out_features=100, bias=True)
+            (w_out): Linear(in_features=200, out_features=100, bias=True)
+            (layer_norm): LayerNorm((100,), eps=1e-05, elementwise_affine=True)
+        )
+        Block(num_src_nodes=1203, num_dst_nodes=600, num_edges=603)
+        """
         for l in range(self.gnn_param['layer']):
             for h in range(self.sample_param['history']):
                 rst = self.layers['l' + str(l) + 'h' + str(h)](mfgs[l][h])
@@ -58,12 +86,14 @@ class GeneralModel(torch.nn.Module):
                     mfgs[l + 1][h].srcdata['h'] = rst
                 else:
                     out.append(rst)
+        
         if self.sample_param['history'] == 1:
             out = out[0]
         else:
             out = torch.stack(out, dim=0)
             out = self.combiner(out)[0][-1, :, :]
-        return self.edge_predictor(out, neg_samples=neg_samples)
+        ret = self.edge_predictor(out, neg_samples=neg_samples)
+        return ret
 
     def get_emb(self, mfgs):
         if self.memory_param['type'] == 'node':

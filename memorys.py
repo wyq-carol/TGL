@@ -1,7 +1,17 @@
 import torch
 import dgl
-from layers import TimeEncode
+from layers.tgn_layer import TimeEncode
 from torch_scatter import scatter
+import time
+
+class GNNTimer:
+    def __enter__(self):
+        self.start_time = time.time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_time = time.time()
+        elapsed_time = end_time - self.start_time
+        # print(f"upodate mailbox: {elapsed_time:.6f} seconds")
 
 class MailBox():
 
@@ -61,25 +71,65 @@ class MailBox():
                 torch.index_select(self.mailbox_ts, 0, idx, out=self.pinned_mailbox_ts_buffs[i][:idx.shape[0]])
                 b.srcdata['mail_ts'] = self.pinned_mailbox_ts_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
             else:
-                b.srcdata['mem'] = self.node_memory[b.srcdata['ID'].long()].cuda()
+                # print("*** this use ***")
+                # tmp = b.srcdata['ID'].long().to("cpu")
+                # print(tmp.shape)
+                # print(tmp.numpy().tolist())
+                # TODO b.srcdata['ID']中有很多重复的数值 查一下b.srcdata['mem']用途
+                b.srcdata['mem'] = self.node_memory[b.srcdata['ID'].long()].cuda() #wyq_cuda1
+                # print(f"b.srcdata['mem'].shape: {b.srcdata['mem'].shape}")
                 b.srcdata['mem_ts'] = self.node_memory_ts[b.srcdata['ID'].long()].cuda()
                 b.srcdata['mem_input'] = self.mailbox[b.srcdata['ID'].long()].cuda().reshape(b.srcdata['ID'].shape[0], -1)
                 b.srcdata['mail_ts'] = self.mailbox_ts[b.srcdata['ID'].long()].cuda()
+                
+                # # wyq_todo_delete
+                # print("===func===prep_input_mails===")
+                # print(b.srcdata['ID'].long())
+                # print("mem:(node_memory) ")
+                # print(b.srcdata['mem'])
+                # print("mem_ts:(node_memory_ts) ")
+                # print(b.srcdata['mem_ts'])
+                # print("mem_input(mailbox): ")
+                # print(b.srcdata['mem_input'])
+                # print("mail_ts(mailbox_ts): ")
+                # print(b.srcdata['mail_ts'])
+                
+                # b.srcdata['mem'] = self.node_memory[b.srcdata['ID'].long()]
+                # b.srcdata['mem_ts'] = self.node_memory_ts[b.srcdata['ID'].long()]
+                # b.srcdata['mem_input'] = self.mailbox[b.srcdata['ID'].long()].reshape(b.srcdata['ID'].shape[0], -1)
+                # b.srcdata['mail_ts'] = self.mailbox_ts[b.srcdata['ID'].long()]
 
     def update_memory(self, nid, memory, root_nodes, ts, neg_samples=1):
         if nid is None:
             return
-        num_true_src_dst = root_nodes.shape[0] // (neg_samples + 2) * 2
+        num_true_src_dst = root_nodes.shape[0] // (neg_samples + 2) * 2 # num_true_src_dst = batch_size*2 = 400
         with torch.no_grad():
             nid = nid[:num_true_src_dst].to(self.device)
             memory = memory[:num_true_src_dst].to(self.device)
             ts = ts[:num_true_src_dst].to(self.device)
+            # print("*** last batch update memory ***")
+            # print(nid.long().shape)
+            # print(nid.long())
             self.node_memory[nid.long()] = memory
             self.node_memory_ts[nid.long()] = ts
+            # TODO 只有最后一次更新的memory和ts有效（看一下memory是干什么的
+            # # wyq_todo_delete
+            # print("===func===update_memory===")
+            # print(nid.long())
+            # print("===self.node_memory===")
+            # print(self.node_memory)
+            # print(self.node_memory[nid.long()].shape)
+            # print(f"memory.shape {memory.shape}")
+            # print(f"ts.shape {ts.shape}")
+            # non_zero_rows = (self.node_memory.cpu() != 0).any(dim=1).sum().item()
+            # print("real non-zero lines 非零行的数量：", non_zero_rows)
+
+            # print("===self.node_memory_ts===")
+            # print(self.node_memory_ts)
 
     def update_mailbox(self, nid, memory, root_nodes, ts, edge_feats, block, neg_samples=1):
         with torch.no_grad():
-            num_true_edges = root_nodes.shape[0] // (neg_samples + 2)
+            num_true_edges = root_nodes.shape[0] // (neg_samples + 2) # num_true_edges = batch_size = 200
             memory = memory.to(self.device)
             if edge_feats is not None:
                 edge_feats = edge_feats.to(self.device)
@@ -87,33 +137,56 @@ class MailBox():
                 block = block.to(self.device)
             # TGN/JODIE
             if self.memory_param['deliver_to'] == 'self':
-                src = torch.from_numpy(root_nodes[:num_true_edges]).to(self.device)
-                dst = torch.from_numpy(root_nodes[num_true_edges:num_true_edges * 2]).to(self.device)
-                mem_src = memory[:num_true_edges]
-                mem_dst = memory[num_true_edges:num_true_edges * 2]
-                if self.dim_edge_feat > 0:
-                    src_mail = torch.cat([mem_src, mem_dst, edge_feats], dim=1)
-                    dst_mail = torch.cat([mem_dst, mem_src, edge_feats], dim=1)
-                else:
-                    src_mail = torch.cat([mem_src, mem_dst], dim=1)
-                    dst_mail = torch.cat([mem_dst, mem_src], dim=1)
-                mail = torch.cat([src_mail, dst_mail], dim=1).reshape(-1, src_mail.shape[1])
-                nid = torch.cat([src.unsqueeze(1), dst.unsqueeze(1)], dim=1).reshape(-1)
-                mail_ts = torch.from_numpy(ts[:num_true_edges * 2]).to(self.device)
-                if mail_ts.dtype == torch.float64:
-                    import pdb; pdb.set_trace()
-                # find unique nid to update mailbox
-                uni, inv = torch.unique(nid, return_inverse=True)
-                perm = torch.arange(inv.size(0), dtype=inv.dtype, device=inv.device)
-                perm = inv.new_empty(uni.size(0)).scatter_(0, inv, perm)
-                nid = nid[perm]
-                mail = mail[perm]
-                mail_ts = mail_ts[perm]
-                if self.memory_param['mail_combine'] == 'last':
-                    self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
-                    self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
-                    if self.memory_param['mailbox_size'] > 1:
-                        self.next_mail_pos[nid.long()] = torch.remainder(self.next_mail_pos[nid.long()] + 1, self.memory_param['mailbox_size'])
+                with GNNTimer():
+                    src = torch.from_numpy(root_nodes[:num_true_edges]).to(self.device)
+                    dst = torch.from_numpy(root_nodes[num_true_edges:num_true_edges * 2]).to(self.device)
+                    mem_src = memory[:num_true_edges]
+                    mem_dst = memory[num_true_edges:num_true_edges * 2]
+                    if self.dim_edge_feat > 0:
+                        src_mail = torch.cat([mem_src, mem_dst, edge_feats], dim=1) # 按行拼接列
+                        dst_mail = torch.cat([mem_dst, mem_src, edge_feats], dim=1)
+                    else:
+                        src_mail = torch.cat([mem_src, mem_dst], dim=1)
+                        dst_mail = torch.cat([mem_dst, mem_src], dim=1)
+                    mail = torch.cat([src_mail, dst_mail], dim=1).reshape(-1, src_mail.shape[1])
+                    nid = torch.cat([src.unsqueeze(1), dst.unsqueeze(1)], dim=1).reshape(-1)
+                    mail_ts = torch.from_numpy(ts[:num_true_edges * 2]).to(self.device)
+                with GNNTimer():
+                    if mail_ts.dtype == torch.float64:
+                        import pdb; pdb.set_trace()
+                    # find unique nid to update mailbox
+                    # breakpoint()
+                    uni, inv = torch.unique(nid, return_inverse=True)
+                    perm = torch.arange(inv.size(0), dtype=inv.dtype, device=inv.device)
+                    perm = inv.new_empty(uni.size(0)).scatter_(0, inv, perm)
+                    """ uni 是原 nid 张量中的唯一值列表; inv 是原 nid 张量中的每个元素在唯一值列表中的索引;
+                        使用 inv 张量来重新排列原始数据，以便确保每个节点的顺序与唯一值列表中的顺序相匹配。 
+                        perm 表示
+                    """
+                with GNNTimer():
+                    # print(f"before: {nid}")
+                    nid = nid[perm]
+                    # print(f"after: {nid}")
+                    mail = mail[perm]
+                    mail_ts = mail_ts[perm]
+                    if self.memory_param['mail_combine'] == 'last':
+                        # 更新mailbox和mailbox_ts
+                        # print("*** last update mailbox ***")
+                        # print(nid.long().shape)
+                        # print(nid.long())
+                        # print(f"mail.shape {mail.shape}")
+                        # print(f"mail_ts.shape {mail_ts.shape}")
+                        self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
+                        self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                        # # wyq_todo_delete
+                        # print("===func===update_mailbox===")
+                        # print(nid.long())
+                        # print("===self.mailbox===")
+                        # print(self.mailbox)
+                        # print("===self.mailbox_ts===")
+                        # print(self.mailbox_ts)
+                        if self.memory_param['mailbox_size'] > 1:
+                            self.next_mail_pos[nid.long()] = torch.remainder(self.next_mail_pos[nid.long()] + 1, self.memory_param['mailbox_size'])
             # APAN
             elif self.memory_param['deliver_to'] == 'neighbors':
                 mem_src = memory[:num_true_edges]
@@ -140,6 +213,7 @@ class MailBox():
                     uni, inv = torch.unique(nid, return_inverse=True)
                     perm = torch.arange(inv.size(0), dtype=inv.dtype, device=inv.device)
                     perm = inv.new_empty(uni.size(0)).scatter_(0, inv, perm)
+                    
                     nid = nid[perm]
                     mail = mail[perm]
                     mail_ts = mail_ts[perm]
@@ -180,11 +254,12 @@ class GRUMemeoryUpdater(torch.nn.Module):
                 self.node_feat_map = torch.nn.Linear(dim_node_feat, dim_hid)
 
     def forward(self, mfg):
+        # breakpoint()
         for b in mfg:
             if self.dim_time > 0:
-                time_feat = self.time_enc(b.srcdata['ts'] - b.srcdata['mem_ts'])
-                b.srcdata['mem_input'] = torch.cat([b.srcdata['mem_input'], time_feat], dim=1)
-            updated_memory = self.updater(b.srcdata['mem_input'], b.srcdata['mem'])
+                time_feat = self.time_enc(b.srcdata['ts'] - b.srcdata['mem_ts']) # TODO usage
+                b.srcdata['mem_input'] = torch.cat([b.srcdata['mem_input'], time_feat], dim=1) # TODO usage
+            updated_memory = self.updater(b.srcdata['mem_input'], b.srcdata['mem']) # TODO usage
             self.last_updated_ts = b.srcdata['ts'].detach().clone()
             self.last_updated_memory = updated_memory.detach().clone()
             self.last_updated_nid = b.srcdata['ID'].detach().clone()

@@ -42,7 +42,8 @@ def parse_config(f):
     train_param = conf['train'][0]
     return sample_param, memory_param, gnn_param, train_param
 
-def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
+def to_dgl_blocks(ret, hist, reverse=False, cuda=True): #wyq_cuda1
+# def to_dgl_blocks(ret, hist, reverse=False, cuda=False):
     mfgs = list()
     for r in ret:
         if not reverse:
@@ -130,7 +131,8 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         i += 1
                     else:
                         srch = edge_feats[b.edata['ID'].long()].float()
-                        b.edata['f'] = srch.cuda()
+                        b.edata['f'] = srch.cuda() #wyq_cuda1
+                        # b.edata['f'] = srch
     return mfgs
 
 def get_ids(mfgs, node_feats, edge_feats):
