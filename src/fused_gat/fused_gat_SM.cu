@@ -197,12 +197,12 @@ __global__ void fused_forward_kernel(int m, int nnz, int h, int f,
                                      const float negative_slope,
                                      float *edge_max, float *edge_sum,
                                      float *out_feat) {
-  int rid = blockIdx.x;
-  int hid = blockIdx.y;
-  int lb = row_ptr[rid];
-  int hb = row_ptr[rid + 1];
-  int ptr = lb + threadIdx.x;
-  int loop = (hb - lb + 31) / 32;
+  int rid = blockIdx.x;  // 节点编号
+  int hid = blockIdx.y;  // head编号
+  int lb = row_ptr[rid]; // 边-起始下标
+  int hb = row_ptr[rid + 1];  // 边-结束下标
+  int ptr = lb + threadIdx.x;  // 每个thread处理一条边
+  int loop = (hb - lb + 31) / 32;  // 划分warp循环
   extern __shared__ float val_sh[];
   float *attn_val_sh = val_sh;
   int *cid_sh = (int *)&val_sh[32];
@@ -210,19 +210,22 @@ __global__ void fused_forward_kernel(int m, int nnz, int h, int f,
   float attn_row_val = attn_row[rid * h + hid];
   // float attn_row_val=0;
 
+  // insight：这块可以改成flashAttention的online softmax吗？
+  // 1. edge softmax
+  //   1.1 计算weightMax
   float weightMax = -1e38;
   // // computing weightMax
-  for (int j = 0; j < loop; j++) {
+  for (int j = 0; j < loop; j++) {  // 以warp为循环单位(32)
     int pid = ptr + (j << 5);
     float weight = -1e38;
-    if (pid < hb) {
+    if (pid < hb) {  // warp内每个thread分别计算weight
       int cid = col_ind[pid];
       float attn_col_val = attn_col[cid * h + hid];
       weight = attn_row_val + attn_col_val;
       weight = LeakyRelu(weight, negative_slope);
     }
     __syncwarp();
-    for (int stride = 16; stride > 0; stride >>= 1) {
+    for (int stride = 16; stride > 0; stride >>= 1) {  // 逐步减半reduce，最终warp内的每个thread都得到weight最大值
       float tmp = __shfl_xor_sync(0xffffffff, weight, stride, 32);
       weight = MAX(tmp, weight);
     }
@@ -231,8 +234,9 @@ __global__ void fused_forward_kernel(int m, int nnz, int h, int f,
   if (threadIdx.x == 0)
     edge_max[rid * h + hid] = weightMax;
 
+  //   1.2 计算expAll
   float expAll = 0;
-  for (int j = 0; j < loop; j++) {
+  for (int j = 0; j < loop; j++) {    // softmax
     int pid = ptr + (j << 5);
     float exptmp = 0;
     if (pid < hb) {
@@ -252,6 +256,7 @@ __global__ void fused_forward_kernel(int m, int nnz, int h, int f,
   if (threadIdx.x == 0)
     edge_sum[rid * h + hid] = expAll;
 
+  //   1.3 计算softmax
   int fid = threadIdx.y * 32 + threadIdx.x;
   // for (int fid = threadIdx.x; fid < (f + 31) / 32 * 32; fid += 32)
   {
@@ -272,11 +277,11 @@ __global__ void fused_forward_kernel(int m, int nnz, int h, int f,
       //     attn_val_sh[32 * hid + threadIdx.x] = 0;
       // }
       __syncwarp();
-      int jj = lb + (j << 5);
+      int jj = lb + (j << 5);  // 聚合acc
       for (int kk = 0; kk < 32 && jj + kk < hb; kk++) {
         int cid = cid_sh[kk];
         float val = attn_val_sh[kk];
-        acc += val * in_feat[cid * h * f + hid * f + fid];
+        acc += val * in_feat[cid * h * f + hid * f + fid];  // 矩阵乘
       }
       __syncwarp();
     }
