@@ -86,10 +86,14 @@ def to_dgl_blocks_our(ret, hist, reverse=False, cuda=True):
         num_edges = b.num_edges()
         
         col,row=b.edges(order='srcdst')
-        adj_csr = sp.csr_matrix((torch.ones(row.shape), (row, col)), shape=(num_nodes, num_nodes))
+        adj_csr = sp.csc_matrix((torch.ones(row.shape), (row, col)), shape=(num_nodes, num_nodes))
         
-        row_ptr=torch.from_numpy(adj_csr.indptr)
-        col_ind=torch.from_numpy(adj_csr.indices)
+        col_ptr=torch.from_numpy(adj_csr.indptr)
+        row_ind=torch.from_numpy(adj_csr.indices)
+        # _, col_perm = col_ptr.sort()
+        _, col_count = col_ptr.unique_consecutive(return_counts=True)
+        col_ptr_count_0 = int(col_count[0]) - 1
+        col_ptr = col_ptr[col_ptr_count_0:]
         
         if cuda:
             mfgs.append(b.to('cuda:0'))
@@ -97,8 +101,8 @@ def to_dgl_blocks_our(ret, hist, reverse=False, cuda=True):
             mfgs.append(b)
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
     mfgs.reverse()
-    #       node_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim,  mfgs
-    return  None,       row_ptr, col_ind, num_nodes, num_edges, None,           mfgs
+    #       node_feats, col_ptr, row_ind,                    num_nodes, num_edges, mfgs
+    return  None,       col_ptr_count_0, col_ptr, row_ind,   num_nodes, num_edges, mfgs
 
 def node_to_dgl_blocks(root_nodes, ts, cuda=True):
     mfgs = list()
@@ -184,8 +188,8 @@ def prepare_input_our(mfgs, node_feats, edge_feats, combine_first=False, pinned=
                 if b.num_src_nodes() > b.num_dst_nodes():
                     srch = edge_feats[b.edata['ID'].long()].float()
                     b.edata['f'] = srch.cuda()
-    # return edge_feats, edge_feat_dim,       mfgs
-    return   srch,       edge_feats.shape[1], mfgs
+    # return edge_feats, mfgs
+    return   srch,       mfgs
     
 
 def get_ids(mfgs, node_feats, edge_feats):

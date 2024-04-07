@@ -139,7 +139,7 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
         self.w_out = torch.nn.Linear(dim_node_feat + dim_out, dim_out)
         self.layer_norm = torch.nn.LayerNorm(dim_out)
 
-    def forward(self, node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, b):
+    def forward(self, node_feats, edge_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, b):
         time_feat = self.time_enc(b.edata['dt'])
         zero_time_feat = self.time_enc(torch.zeros(b.num_dst_nodes(), dtype=torch.float32, device=torch.device('cuda:0')))
         with GNNTimer():
@@ -159,7 +159,7 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
             V = torch.reshape(V, (V.shape[0], self.num_head, -1))
         
         # TODO@mkj
-        # args: node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, self.dim_out
+        # args: node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, self.dim_node_feat, self.dim_edge_feat, self.dim_out
         # out=fused_tgn_op(attn_row,attn_col,row_ptr,col_ind,col_ptr,row_ind,self.negative_slope,h,save_memory)
         
         with GNNTimer2():

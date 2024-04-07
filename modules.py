@@ -55,7 +55,7 @@ class GeneralModel_fusion(torch.nn.Module):
         if 'combine' in gnn_param and gnn_param['combine'] == 'rnn':
             self.combiner = torch.nn.RNN(gnn_param['dim_out'], gnn_param['dim_out'])
     
-    def forward(self, node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, mfgs, neg_samples=1):
+    def forward(self, node_feats, edge_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, mfgs, neg_samples=1):
         if self.memory_param['type'] == 'node':
             self.memory_updater(mfgs[0]) # GRUMemeoryUpdater
         out = list()
@@ -79,7 +79,7 @@ class GeneralModel_fusion(torch.nn.Module):
         """
         for l in range(self.gnn_param['layer']):
             for h in range(self.sample_param['history']):
-                rst = self.layers['l' + str(l) + 'h' + str(h)](node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, mfgs[l][h])
+                rst = self.layers['l' + str(l) + 'h' + str(h)](node_feats, edge_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, mfgs[l][h])
                 if 'time_transform' in self.gnn_param and self.gnn_param['time_transform'] == 'JODIE':
                     rst = self.layers['l0h' + str(h) + 't'](rst, mfgs[l][h].srcdata['mem_ts'], mfgs[l][h].srcdata['ts'])
                 if l != self.gnn_param['layer'] - 1:

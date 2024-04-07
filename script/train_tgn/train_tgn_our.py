@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--data', type=str, help='dataset name')
@@ -13,8 +14,8 @@ parser.add_argument('--eval_neg_samples', type=int, default=1, help='how many ne
 args=parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-import sys
 sys.path.append('../..')
+
 import torch
 import time
 import random
@@ -24,6 +25,7 @@ from modules import *
 from sampler import *
 from utils import *
 from sklearn.metrics import average_precision_score, roc_auc_score
+
 
 class GNNTimer:
     def __enter__(self):
@@ -135,8 +137,8 @@ def eval(mode='val'):
             if mailbox is not None:
                 mailbox.prep_input_mails(mfgs[0])
             
-            row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim = None, None, None, None, None, None
-            pred_pos, pred_neg = model(node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, mfgs, neg_samples=neg_samples)
+            row_ptr, col_ind, num_nodes, num_edges = None, None, None, None
+            pred_pos, pred_neg = model(node_feats, edge_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, mfgs, neg_samples=neg_samples)
             
             total_loss += criterion(pred_pos, torch.ones_like(pred_pos))
             total_loss += criterion(pred_neg, torch.zeros_like(pred_neg))
@@ -227,13 +229,13 @@ for e in range(train_param['epoch']):
         # prep mfgs
             if gnn_param['arch'] != 'identity':
                 # mfgs = to_dgl_blocks(ret, sample_param['history'])
-                node_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim,  mfgs = to_dgl_blocks_our(
+                node_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, mfgs = to_dgl_blocks_our(
                     ret, sample_param['history'])
             else:
                 mfgs = node_to_dgl_blocks(root_nodes, ts)
                 
             # mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
-            sub_edge_feats, edge_feat_dim, mfgs = prepare_input_our(
+            sub_edge_feats, mfgs = prepare_input_our(
                 mfgs, node_feats, edge_feats, combine_first=combine_first)
             
             if mailbox is not None:
@@ -243,8 +245,8 @@ for e in range(train_param['epoch']):
             optimizer.zero_grad()
         with GNNTimer():
         # 前向
-            # row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim = None, None, None, None, None, None
-            pred_pos, pred_neg = model(node_feats, sub_edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, mfgs)
+            # row_ptr, col_ind, num_nodes, num_edges = None, None, None, None
+            pred_pos, pred_neg = model(node_feats, sub_edge_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, mfgs)
         with GNNTimer():
         # 反向 优化不了一点
             loss = criterion(pred_pos, torch.ones_like(pred_pos))
