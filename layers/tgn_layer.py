@@ -1,10 +1,53 @@
 import torch
+from torch import nn
 import dgl
 import math
 import numpy as np
 import time
 from tgl import sparse
 
+from operators.fused_tgn import fused_tgn_op
+
+"""
+# test fused_tgn_op
+class GATConv(nn.Module): # our gat layer
+    def __init__(self,
+                in_feats,
+                out_feats,
+                num_heads,
+                negative_slope=0.2,
+
+                ):
+        super(GATConv,self).__init__()
+        self.in_feats=in_feats
+        self.out_feats=out_feats
+        self.num_heads=num_heads
+        self.W = nn.Parameter(torch.FloatTensor(in_feats, out_feats * num_heads))
+        self.attn_l = nn.Parameter(torch.zeros(size=(1, num_heads, out_feats)))
+        self.attn_r = nn.Parameter(torch.zeros(size=(1, num_heads, out_feats)))
+        self.negative_slope=negative_slope
+        
+        self.reset_parameters()
+    
+    
+    def reset_parameters(self):
+        gain = nn.init.calculate_gain('relu')
+        nn.init.xavier_normal_(self.W, gain=gain)
+        nn.init.xavier_normal_(self.attn_l, gain=gain)
+        nn.init.xavier_normal_(self.attn_r, gain=gain)
+        
+
+    def forward(self,row_ptr,col_ind,col_ptr,row_ind,feat,save_memory=True):
+
+        h=torch.matmul(feat,self.W).view(-1,self.num_heads,self.out_feats)
+
+        attn_row = (self.attn_l * h).sum(dim=-1)
+        attn_col = (self.attn_r * h).sum(dim=-1)
+        
+        out=fused_tgn_op(attn_row,attn_col,row_ptr,col_ind,col_ptr,row_ind,self.negative_slope,h,save_memory)
+            
+        return out
+"""
 
 class GNNTimer:
     def __enter__(self):
@@ -64,7 +107,7 @@ class EdgePredictor(torch.nn.Module):
 class TransfomerAttentionLayer_fusion(torch.nn.Module):
 
     def __init__(self, dim_node_feat, dim_edge_feat, dim_time, num_head, dropout, att_dropout, dim_out, combined=False):
-        super(TransfomerAttentionLayer, self).__init__()
+        super(TransfomerAttentionLayer_fusion, self).__init__()
         self.num_head = num_head
         self.dim_node_feat = dim_node_feat
         self.dim_edge_feat = dim_edge_feat
@@ -96,7 +139,7 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
         self.w_out = torch.nn.Linear(dim_node_feat + dim_out, dim_out)
         self.layer_norm = torch.nn.LayerNorm(dim_out)
 
-    def forward(self, b):
+    def forward(self, node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, b):
         time_feat = self.time_enc(b.edata['dt'])
         zero_time_feat = self.time_enc(torch.zeros(b.num_dst_nodes(), dtype=torch.float32, device=torch.device('cuda:0')))
         with GNNTimer():
@@ -114,9 +157,14 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
             Q = torch.reshape(Q, (Q.shape[0], self.num_head, -1)) 
             K = torch.reshape(K, (K.shape[0], self.num_head, -1))
             V = torch.reshape(V, (V.shape[0], self.num_head, -1))
+        
+        # TODO@mkj
+        # args: node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim, edge_feat_dim, self.dim_out
+        # out=fused_tgn_op(attn_row,attn_col,row_ptr,col_ind,col_ptr,row_ind,self.negative_slope,h,save_memory)
+        
         with GNNTimer2():
             # breakpoint()
-            att = sparse.edge_softmax(b, self.att_act(torch.sum(Q*K, dim=2)))
+            att = dgl.ops.edge_softmax(b, self.att_act(torch.sum(Q*K, dim=2)))
             att = self.att_dropout(att)
             V = torch.reshape(V*att[:, :, None], (V.shape[0], -1))
             b.srcdata['v'] = torch.cat([torch.zeros((b.num_dst_nodes(), V.shape[1]), device=torch.device('cuda:0')), V], dim=0)
@@ -186,9 +234,10 @@ class TransfomerAttentionLayer(torch.nn.Module):
                 Q = torch.reshape(Q, (Q.shape[0], self.num_head, -1)) 
                 K = torch.reshape(K, (K.shape[0], self.num_head, -1))
                 V = torch.reshape(V, (V.shape[0], self.num_head, -1))
+            breakpoint()
             with GNNTimer2():
                 # breakpoint()
-                att = sparse.edge_softmax(b, self.att_act(torch.sum(Q*K, dim=2)))
+                att = dgl.ops.edge_softmax(b, self.att_act(torch.sum(Q*K, dim=2)))
                 att = self.att_dropout(att)
                 V = torch.reshape(V*att[:, :, None], (V.shape[0], -1))
                 b.srcdata['v'] = torch.cat([torch.zeros((b.num_dst_nodes(), V.shape[1]), device=torch.device('cuda:0')), V], dim=0)

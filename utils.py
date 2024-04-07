@@ -47,6 +47,7 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True): #wyq_cuda1
     mfgs = list()
     for r in ret:
         if not reverse:
+            # breakpoint()
             b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
             b.srcdata['ID'] = torch.from_numpy(r.nodes())
             b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
@@ -64,6 +65,40 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True): #wyq_cuda1
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
     mfgs.reverse()
     return mfgs
+
+def to_dgl_blocks_our(ret, hist, reverse=False, cuda=True):
+# def to_dgl_blocks(ret, hist, reverse=False, cuda=False):
+    mfgs = list()
+    for r in ret:
+        if not reverse:
+            b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
+            b.srcdata['ID'] = torch.from_numpy(r.nodes())
+            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
+            b.srcdata['ts'] = torch.from_numpy(r.ts())
+        else:
+            b = dgl.create_block((r.row(), r.col()), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in())
+            b.dstdata['ID'] = torch.from_numpy(r.nodes())
+            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
+            b.dstdata['ts'] = torch.from_numpy(r.ts())
+        b.edata['ID'] = torch.from_numpy(r.eid())
+        
+        num_nodes = b.num_src_nodes()
+        num_edges = b.num_edges()
+        
+        col,row=b.edges(order='srcdst')
+        adj_csr = sp.csr_matrix((torch.ones(row.shape), (row, col)), shape=(num_nodes, num_nodes))
+        
+        row_ptr=torch.from_numpy(adj_csr.indptr)
+        col_ind=torch.from_numpy(adj_csr.indices)
+        
+        if cuda:
+            mfgs.append(b.to('cuda:0'))
+        else:
+            mfgs.append(b)
+    mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
+    mfgs.reverse()
+    #       node_feats, row_ptr, col_ind, num_nodes, num_edges, node_feat_dim,  mfgs
+    return  None,       row_ptr, col_ind, num_nodes, num_edges, None,           mfgs
 
 def node_to_dgl_blocks(root_nodes, ts, cuda=True):
     mfgs = list()
@@ -120,6 +155,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
     if edge_feats is not None:
         for mfg in mfgs:
             for b in mfg:
+                # breakpoint()
                 if b.num_src_nodes() > b.num_dst_nodes():
                     if pinned:
                         if eids is not None:
@@ -134,6 +170,23 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                         b.edata['f'] = srch.cuda() #wyq_cuda1
                         # b.edata['f'] = srch
     return mfgs
+
+# our
+def prepare_input_our(mfgs, node_feats, edge_feats, combine_first=False, pinned=False, nfeat_buffs=None, efeat_buffs=None, nids=None, eids=None):
+    t_idx = 0
+    t_cuda = 0
+    i = 0
+    assert node_feats == None, "node_feats is None"
+    
+    if edge_feats is not None:
+        for mfg in mfgs:
+            for b in mfg:
+                if b.num_src_nodes() > b.num_dst_nodes():
+                    srch = edge_feats[b.edata['ID'].long()].float()
+                    b.edata['f'] = srch.cuda()
+    # return edge_feats, edge_feat_dim,       mfgs
+    return   srch,       edge_feats.shape[1], mfgs
+    
 
 def get_ids(mfgs, node_feats, edge_feats):
     nids = list()
@@ -164,4 +217,58 @@ def get_pinned_buffers(sample_param, batch_size, node_feats, edge_feats):
         for _ in range(sample_param['history']):
             pinned_nfeat_buffs.insert(0, torch.zeros((limit, node_feats.shape[1]), pin_memory=True))
     return pinned_nfeat_buffs, pinned_efeat_buffs
+
+import scipy.sparse as sp
+def load_dataset(args):
+    
+    g = data[0]
+    # add self loop
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    
+    col,row=g.edges(order='srcdst')
+    adj_csr = sp.csr_matrix((torch.ones(row.shape), (row, col)), shape=(g.num_nodes(), g.num_nodes()))
+    
+    row_ptr=torch.from_numpy(adj_csr.indptr)
+    col_ind=torch.from_numpy(adj_csr.indices)
+
+    adj_coo=adj_csr.tocoo()
+    row_ind=torch.from_numpy(adj_coo.row)
+    print('dataset verified:',torch.equal(col_ind,torch.from_numpy(adj_coo.col)))
+    
+    if args.dataset == 'cora':
+        data = dgl.data.CoraGraphDataset()
+    elif args.dataset == 'citeseer':
+        data = dgl.data.CiteseerGraphDataset()
+    elif args.dataset == 'pubmed':
+        data = dgl.data.PubmedGraphDataset()
+    elif args.dataset == 'reddit':
+        data = dgl.data.RedditDataset()
+    else:
+        raise ValueError('Unknown dataset: {}'.format(args.dataset))
+
+    g = data[0]
+    # add self loop
+    g = dgl.remove_self_loop(g)
+    g = dgl.add_self_loop(g)
+    
+    col,row=g.edges(order='srcdst')
+    adj_csr = sp.csr_matrix((torch.ones(row.shape), (row, col)), shape=(g.num_nodes(), g.num_nodes()))
+    
+    row_ptr=torch.from_numpy(adj_csr.indptr)
+    col_ind=torch.from_numpy(adj_csr.indices)
+
+    adj_coo=adj_csr.tocoo()
+    row_ind=torch.from_numpy(adj_coo.row)
+    print('dataset verified:',torch.equal(col_ind,torch.from_numpy(adj_coo.col)))
+
+    features = g.ndata['feat']
+    labels = g.ndata['label']
+    train_mask = g.ndata['train_mask']
+    val_mask = g.ndata['val_mask']
+    test_mask = g.ndata['test_mask']
+
+    n_classes=data.num_labels
+    num_feats = features.shape[1]
+    return row_ind,row_ptr,col_ind,features,labels,train_mask,val_mask,test_mask,n_classes,num_feats
 

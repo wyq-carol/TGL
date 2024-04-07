@@ -176,7 +176,7 @@ if args.local_rank < args.num_gpus:
     model = GeneralModel(dim_feats[1], dim_feats[4], sample_param, memory_param, gnn_param, train_param).cuda()
     find_unused_parameters = True if sample_param['history'] > 1 else False
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], process_group=nccl_group, output_device=args.local_rank, find_unused_parameters=find_unused_parameters)
-    creterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
     pinned_nfeat_buffs, pinned_efeat_buffs = get_pinned_buffers(sample_param, train_param['batch_size'], node_feats, edge_feats)
     if mailbox is not None:
@@ -229,8 +229,8 @@ if args.local_rank < args.num_gpus:
                 model.train()
                 optimizer.zero_grad()
                 pred_pos, pred_neg = model(mfgs)
-                loss = creterion(pred_pos, torch.ones_like(pred_pos))
-                loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+                loss = criterion(pred_pos, torch.ones_like(pred_pos))
+                loss += criterion(pred_neg, torch.zeros_like(pred_neg))
                 loss.backward()
                 optimizer.step()
                 with torch.no_grad():
@@ -278,8 +278,8 @@ if args.local_rank < args.num_gpus:
                 model.train()
                 optimizer.zero_grad()
                 pred_pos, pred_neg = model(mfgs)
-                loss = creterion(pred_pos, torch.ones_like(pred_pos))
-                loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+                loss = criterion(pred_pos, torch.ones_like(pred_pos))
+                loss += criterion(pred_neg, torch.zeros_like(pred_neg))
                 loss.backward()
                 optimizer.step()
                 with torch.no_grad():

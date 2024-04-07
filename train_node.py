@@ -55,7 +55,7 @@ if not os.path.isfile('embs/' + emb_file_name):
         combine_first = True
     model = GeneralModel(gnn_dim_node, gnn_dim_edge, sample_param, memory_param, gnn_param, train_param, combined=combine_first).cuda()
     mailbox = MailBox(memory_param, g['indptr'].shape[0] - 1, gnn_dim_edge) if memory_param['type'] != 'none' else None
-    creterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
     if 'all_on_gpu' in train_param and train_param['all_on_gpu']:
         if node_feats is not None:
