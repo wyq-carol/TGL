@@ -69,40 +69,41 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True): #wyq_cuda1
 def to_dgl_blocks_our(ret, hist, reverse=False, cuda=True):
 # def to_dgl_blocks(ret, hist, reverse=False, cuda=False):
     mfgs = list()
-    for r in ret:
-        if not reverse:
-            b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
-            b.srcdata['ID'] = torch.from_numpy(r.nodes())
-            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
-            b.srcdata['ts'] = torch.from_numpy(r.ts())
-        else:
-            b = dgl.create_block((r.row(), r.col()), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in())
-            b.dstdata['ID'] = torch.from_numpy(r.nodes())
-            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
-            b.dstdata['ts'] = torch.from_numpy(r.ts())
-        b.edata['ID'] = torch.from_numpy(r.eid())
-        
-        num_nodes = b.num_src_nodes()
-        num_edges = b.num_edges()
-        
-        col,row=b.edges(order='srcdst')
-        adj_csr = sp.csc_matrix((torch.ones(row.shape), (row, col)), shape=(num_nodes, num_nodes))
-        
-        col_ptr=torch.from_numpy(adj_csr.indptr)
-        row_ind=torch.from_numpy(adj_csr.indices)
-        # _, col_perm = col_ptr.sort()
-        _, col_count = col_ptr.unique_consecutive(return_counts=True)
-        col_ptr_count_0 = int(col_count[0]) - 1
-        col_ptr = col_ptr[col_ptr_count_0:]
-        
-        if cuda:
-            mfgs.append(b.to('cuda:0'))
-        else:
-            mfgs.append(b)
+    assert len(ret) == 1
+    #for r in ret:
+    r = ret[0]
+    if not reverse:
+        b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
+        b.srcdata['ID'] = torch.from_numpy(r.nodes())
+        b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
+        b.srcdata['ts'] = torch.from_numpy(r.ts())
+        #print(f'r.col[size={len(r.col())}]={r.col()}')
+        #print(f'r.row[size={len(r.row())}]={r.row()}')
+        #print(f'r.dim_in()={r.dim_in()}')
+        #print(f'r.dim_out()={r.dim_out()}')
+    else:
+        b = dgl.create_block((r.row(), r.col()), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in())
+        b.dstdata['ID'] = torch.from_numpy(r.nodes())
+        b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
+        b.dstdata['ts'] = torch.from_numpy(r.ts())
+    b.edata['ID'] = torch.from_numpy(r.eid())
+    
+    num_nodes = b.num_dst_nodes()
+    num_edges = b.num_edges()
+
+    adj_csc = sp.csc_matrix((torch.ones((r.row()).shape), (r.col(), r.row())), shape=(b.num_src_nodes(), b.num_dst_nodes()))
+
+    col_ptr=torch.from_numpy(adj_csc.indptr)
+    row_ind=torch.from_numpy(adj_csc.indices)
+    
+    if cuda:
+        mfgs.append(b.to('cuda:0'))
+    else:
+        mfgs.append(b)
     mfgs = list(map(list, zip(*[iter(mfgs)] * hist)))
     mfgs.reverse()
-    #       node_feats, col_ptr, row_ind,                    num_nodes, num_edges, mfgs
-    return  None,       col_ptr_count_0, col_ptr, row_ind,   num_nodes, num_edges, mfgs
+    #       node_feats, col_ptr, row_ind, num_nodes, num_edges, mfgs
+    return  None,       col_ptr, row_ind, num_nodes, num_edges, mfgs
 
 def node_to_dgl_blocks(root_nodes, ts, cuda=True):
     mfgs = list()

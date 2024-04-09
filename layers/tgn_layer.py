@@ -139,21 +139,17 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
         self.w_out = torch.nn.Linear(dim_node_feat + dim_out, dim_out)
         self.layer_norm = torch.nn.LayerNorm(dim_out)
 
-    def forward(self, node_feats, edge_feats, col_ptr_count_0, col_ptr, row_ind, num_nodes, num_edges, b):
-        '''def forward(self, 
-                    v,  # b.srcdata['h']
-                    dt,  # b.edata['dt']
-                    edge_feats,  # b.edata['f']
-                    col_ptr_count_0, 
-                    col_ptr, 
-                    row_ind, 
-                    num_nodes, 
-                    num_dst_nodes, 
-                    num_edges):'''
-        v = b.srcdata['h']
-        dt = b.edata['dt']
-        edge_feats = b.edata['f']
-        num_dst_nodes = b.num_dst_nodes()
+    #def forward(self, node_feats, edge_feats, col_ptr, row_ind, num_nodes, num_edges, b):
+    def forward(self, 
+                b,
+                col_ptr,  # CSC
+                row_ind):
+        v=b.srcdata['h']
+        dt=b.edata['dt']
+        edge_feats=b.edata['f']
+        num_nodes = col_ptr.size(0) - 1
+        num_edges = row_ind.size(0)
+        #print(f'num_nodes={num_nodes}, num_edges={num_edges}')
 
         time_feat = self.time_enc(dt)
         zero_time_feat = self.time_enc(torch.zeros(b.num_dst_nodes(), dtype=torch.float32, device=torch.device('cuda:0')))
@@ -165,39 +161,39 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
             # apply vertex  b.srcdata['h']  [1197, 100]
             # apply edge    QKV             [597, 2, 50] 
             # TODO 先分别乘完再concat(不需要都乘wk 需要提前选一下按节点还是按边？)
-            Q1 = torch.cat([v[:num_dst_nodes], zero_time_feat], dim=1)
-            Q = self.w_q(torch.cat([v[:num_dst_nodes], zero_time_feat], dim=1))[b.edges()[1]]
-            print(b)
-            print(b.edges())
-            print(f'Q1 size={Q1.size()}')
-            print(f'v1 size={v[:num_dst_nodes].size()}')
-            print(f'v2 size={v[num_dst_nodes:].size()}')
-            print(f'zero_time_feat size={zero_time_feat.size()}')
-            K = self.w_k(torch.cat([v[num_dst_nodes:], edge_feats, time_feat], dim=1))
-            V = self.w_v(torch.cat([v[num_dst_nodes:], edge_feats, time_feat], dim=1))
+            #Q1 = torch.cat([v[:num_dst_nodes], zero_time_feat], dim=1)
+            Q = self.w_q(torch.cat([v[:b.num_dst_nodes()], zero_time_feat], dim=1))[b.edges()[1]]
+            #print(b)
+            #print(b.edges())
+            #print(f'Q1 size={Q1.size()}')
+            #print(f'v1 size={v[:num_dst_nodes].size()}')
+            #print(f'v2 size={v[num_dst_nodes:].size()}')
+            #print(f'zero_time_feat size={zero_time_feat.size()}')
+            K = self.w_k(torch.cat([v[b.num_dst_nodes():], edge_feats, time_feat], dim=1))
+            V = self.w_v(torch.cat([v[b.num_dst_nodes():], edge_feats, time_feat], dim=1))
         with GNNTimer():
             Q = torch.reshape(Q, (Q.shape[0], self.num_head, -1)) 
             K = torch.reshape(K, (K.shape[0], self.num_head, -1))
             V = torch.reshape(V, (V.shape[0], self.num_head, -1))
         
-        print(b)
-        print(f'v size={v.size()}')
-        print(f'dt size={dt.size()}')
-        print(f'b.num_dst_nodes()={b.num_dst_nodes()}')
-        print(f'zero_time_feat size={zero_time_feat.size()}')
-        print(f'time_feat size={time_feat.size()}')
+        #print(b)
+        #print(f'v size={v.size()}')
+        #print(f'dt size={dt.size()}')
+        #print(f'b.num_dst_nodes()={b.num_dst_nodes()}')
+        #print(f'zero_time_feat size={zero_time_feat.size()}')
+        #print(f'time_feat size={time_feat.size()}')
 
-        if node_feats is not None:
-            print(f'node_feats size={node_feats.size()}')
-        print(f'edge_feats size={edge_feats.size()}')
-        print(f'col_ptr_count_0={col_ptr_count_0}')
-        print(f'col_ptr size={col_ptr.size()}')
-        print(f'row_ind size={row_ind.size()}')
-        print(f'col_ptr={col_ptr.tolist()}')
-        print(f'row_ind={row_ind.tolist()}')
-        print(f'num_nodes={num_nodes}')
-        print(f'num_edges={num_edges}')
-        print(f'Q K V e size={Q.size()}')
+        #if node_feats is not None:
+        #    print(f'node_feats size={node_feats.size()}')
+        #print(f'edge_feats size={edge_feats.size()}')
+        #print(f'col_ptr_count_0={col_ptr_count_0}')
+        #print(f'col_ptr size={col_ptr.size()}')
+        #print(f'row_ind size={row_ind.size()}')
+        #print(f'col_ptr={col_ptr.tolist()}')
+        #print(f'row_ind={row_ind.tolist()}')
+        #print(f'num_nodes={num_nodes}')
+        #print(f'num_edges={num_edges}')
+        #print(f'Q K V e size={Q.size()}')
 
         # TODO@mkj
         # args: node_feats, edge_feats, row_ptr, col_ind, num_nodes, num_edges, self.dim_node_feat, self.dim_edge_feat, self.dim_out
@@ -217,7 +213,7 @@ class TransfomerAttentionLayer_fusion(torch.nn.Module):
                 rst = b.dstdata['h']
             rst = self.w_out(rst)
             rst = torch.nn.functional.relu(self.dropout(rst))
-        # print()
+        #print(f'rst size={rst.size()}')
         return self.layer_norm(rst)
 
 class TransfomerAttentionLayer(torch.nn.Module):
